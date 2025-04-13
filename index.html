@@ -113,6 +113,27 @@
             outline: none;
             box-shadow: 0 0 0 2px #3b82f6;
         }
+        #send-button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        #send-button:hover {
+            background-color: #2563eb;
+        }
+        .input-with-button {
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -123,7 +144,12 @@
     <div class="status-indicator" id="status-indicator">Waiting for permission</div>
     
     <div id="text-input-container">
-        <input type="text" id="text-input" placeholder="Type your message here..." />
+        <div class="input-with-button">
+            <input type="text" id="text-input" placeholder="Type your message here..." />
+            <button id="send-button">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
     </div>
     
     <div class="buttons-container">
@@ -174,6 +200,7 @@
         const statusIndicator = document.getElementById('status-indicator');
         const textInputContainer = document.getElementById('text-input-container');
         const textInput = document.getElementById('text-input');
+        const sendButton = document.getElementById('send-button');
 
         // Firebase initialization (using CDN with modular approach)
         document.addEventListener('DOMContentLoaded', function() {
@@ -264,6 +291,7 @@
             }
         }
         
+        // Handle Enter key press on text input
         textInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 const command = textInput.value.trim();
@@ -271,6 +299,15 @@
                     processCommand(command);
                     textInput.value = '';
                 }
+            }
+        });
+        
+        // Handle send button click
+        sendButton.addEventListener('click', function() {
+            const command = textInput.value.trim();
+            if (command) {
+                processCommand(command);
+                textInput.value = '';
             }
         });
 
