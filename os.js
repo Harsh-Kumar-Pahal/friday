@@ -40,14 +40,7 @@
  function initFirebase() {
      // Firebase configuration (REPLACE WITH YOUR FIREBASE PROJECT CONFIG)
      const firebaseConfig = {
-         apiKey: "AIzaSyCicMEb-Q3dHxmjX319nWEqjwCzjg--ZrE",
-authDomain: "airstore-c4fce.firebaseapp.com",
-databaseURL: "https://airstore-c4fce-default-rtdb.firebaseio.com",
-projectId: "airstore-c4fce",
-storageBucket: "airstore-c4fce.appspot.com",
-messagingSenderId: "733213242091",
-appId: "1:733213242091:web:9116b295e1776d3d8204ae",
-measurementId: "G-BR4NXGHMP9"
+         
      };
 
      // Initialize Firebase
@@ -89,7 +82,7 @@ measurementId: "G-BR4NXGHMP9"
  }
 
  // API configuration
- const API_KEY = 'AIzaSyDzz7WKn72if6YM8dp-MEp85NZL7m5_7RE';
+ const API_KEY = '';
  const visionEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${API_KEY}`;
  const textEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent';
 
