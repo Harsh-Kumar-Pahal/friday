@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background: #000000;
+            overflow: hidden;
+            margin: 0;
+        }
+        #side-chat {
+            position: fixed;
+            right: -300px;
+            top: 0;
+            width: 300px;
+            height: 100%;
+            background: rgba(31, 41, 55, 0.9);
+            backdrop-filter: blur(10px);
+            transition: right 0.3s ease;
+            padding: 20px;
+            color: white;
+            overflow-y: auto;
+            z-index: 15;
+        }
+        #side-chat.open {
+            right: 0;
+        }
+        #side-chat div {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        #webcam-container {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: calc(100% - 100px);
+            padding: 20px;
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #webcam {
+            width: 100%;
+            max-width: 90vw;
+            max-height: 100%;
+            border-radius: 20px;
+            object-fit: cover;
+        }
+        .buttons-container {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 16px;
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+    <div id="webcam-container">
+        <video id="webcam" autoplay muted playsinline></video>
+    </div>
+    
+    <div class="buttons-container">
+        <button id="chat-toggle" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-full">
+            <i class="fas fa-comment-alt"></i>
+        </button>
+        <button id="camera-button" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-full">
+            <i class="fa-solid fa-video-slash" style="color: #3b82f6;"></i>
+        </button>
+    </div>
+    
+    <div id="side-chat"></div>
+
+    <script src="os.js"></script>
+</body>
+</html>
