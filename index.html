@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> AI</title>
+    <title>AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -64,6 +64,32 @@
             gap: 16px;
             z-index: 20;
         }
+        .mic-button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: rgba(31, 41, 55, 0.7);
+            color: white;
+            font-size: 14px;
+            z-index: 30;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -71,9 +97,14 @@
         <video id="webcam" autoplay muted playsinline></video>
     </div>
     
+    <div class="status-indicator" id="status-indicator">Waiting for permission</div>
+    
     <div class="buttons-container">
         <button id="chat-toggle" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-full">
             <i class="fas fa-comment-alt"></i>
+        </button>
+        <button id="mic-button" class="mic-button">
+            <i class="fas fa-microphone"></i>
         </button>
         <button id="camera-button" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-full">
             <i class="fa-solid fa-video-slash" style="color: #3b82f6;"></i>
@@ -82,6 +113,546 @@
     
     <div id="side-chat"></div>
 
-    <script src="os.js"></script>
+    <script>
+        // System state
+        let chatHistory = [];
+        let isListening = false;
+        let isSpeaking = false;
+        let wasInterrupted = false;
+        let recognition = null;
+        let lastCapturedImage = null;
+        let cameraOn = false;
+        const activationPhrase = '';
+        let synth = window.speechSynthesis;
+        let currentVoice = null;
+        let recognitionRetryCount = 0;
+        const maxRetries = 5;
+        let micPermissionGranted = false;
+        let isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+        // DOM elements
+        const chatToggle = document.getElementById('chat-toggle');
+        const micButton = document.getElementById('mic-button');
+        const cameraButton = document.getElementById('camera-button');
+        const webcam = document.getElementById('webcam');
+        const webcamContainer = document.getElementById('webcam-container');
+        const sideChat = document.getElementById('side-chat');
+        const statusIndicator = document.getElementById('status-indicator');
+
+        // Firebase initialization (using CDN with modular approach)
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load Firebase scripts dynamically
+            const firebaseAppScript = document.createElement('script');
+            firebaseAppScript.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js';
+            document.head.appendChild(firebaseAppScript);
+            
+            firebaseAppScript.onload = function() {
+                const firebaseDatabaseScript = document.createElement('script');
+                firebaseDatabaseScript.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js';
+                document.head.appendChild(firebaseDatabaseScript);
+                
+                firebaseDatabaseScript.onload = function() {
+                    initFirebase();
+                };
+            };
+        });
+
+        function initFirebase() {
+            // Firebase configuration (REPLACE WITH YOUR FIREBASE PROJECT CONFIG)
+            const firebaseConfig = {
+                apiKey: "AIzaSyCicMEb-Q3dHxmjX319nWEqjwCzjg--ZrE",
+                authDomain: "airstore-c4fce.firebaseapp.com",
+                databaseURL: "https://airstore-c4fce-default-rtdb.firebaseio.com",
+                projectId: "airstore-c4fce",
+                storageBucket: "airstore-c4fce.appspot.com",
+                messagingSenderId: "733213242091",
+                appId: "1:733213242091:web:9116b295e1776d3d8204ae",
+                measurementId: "G-BR4NXGHMP9"
+            };
+
+            // Initialize Firebase
+            firebase.initializeApp(firebaseConfig);
+            const database = firebase.database();
+            const chatRef = database.ref('chatHistory');
+            
+            // Initialize chat history from Firebase
+            initChatHistory(chatRef);
+        }
+
+        // Initialize chat history from Firebase
+        function initChatHistory(chatRef) {
+            if (!chatRef) return;
+            
+            chatRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                chatHistory = data ? Object.values(data) : [];
+                updateSideChat();
+            }, (error) => {
+                console.error('Error loading chat history:', error);
+                chatHistory = [];
+                updateSideChat();
+            });
+        }
+
+        // Save chat history to Firebase
+        function saveChatHistory() {
+            if (typeof firebase !== 'undefined' && firebase.database) {
+                const database = firebase.database();
+                const chatRef = database.ref('chatHistory');
+                
+                chatRef.set(chatHistory).catch((error) => {
+                    console.error('Error saving chat history:', error);
+                });
+            } else {
+                console.warn('Firebase not initialized, chat history not saved');
+            }
+        }
+
+        // API configuration
+        const API_KEY = 'AIzaSyDzz7WKn72if6YM8dp-MEp85NZL7m5_7RE';
+        const visionEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${API_KEY}`;
+        const textEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent';
+
+        // Speech recognition setup
+        function initVoiceRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                console.error('Speech recognition not supported');
+                updateStatus('Speech recognition not supported');
+                return;
+            }
+
+            function createRecognition() {
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.maxAlternatives = 1;
+                
+                // For iOS, set a shorter timeout
+                if (isIOS) {
+                    recognition.continuous = false;
+                }
+
+                recognition.onstart = () => {
+                    isListening = true;
+                    recognitionRetryCount = 0;
+                    micButton.style.backgroundColor = '#ef4444'; // Red when listening
+                    updateStatus('Listening...');
+                };
+
+                recognition.onend = () => {
+                    isListening = false;
+                    micButton.style.backgroundColor = '#3b82f6'; // Back to blue
+                    updateStatus('');
+                    
+                    if (!isSpeaking && !wasInterrupted && micPermissionGranted) {
+                        if (isIOS) {
+                            // On iOS, don't auto-restart
+                            updateStatus('Tap mic to speak');
+                        } else {
+                            restartRecognition();
+                        }
+                    }
+                };
+
+                recognition.onresult = (event) => {
+                    const last = event.results.length - 1;
+                    const transcript = event.results[last][0].transcript.trim();
+
+                    if (event.results[last].isFinal && isListening) {
+                        stopSpeaking();
+                        processCommand(transcript);
+                        
+                        if (isIOS) {
+                            updateStatus('Processing...');
+                        }
+                    }
+                };
+
+                recognition.onerror = (event) => {
+                    console.error('Recognition error:', event.error);
+                    updateStatus(`Error: ${event.error}`);
+                    micButton.style.backgroundColor = '#3b82f6';
+                    
+                    if (event.error === 'not-allowed') {
+                        micPermissionGranted = false;
+                        updateStatus('Microphone access denied');
+                    } else if (!isSpeaking && event.error !== 'no-speech' && !wasInterrupted && micPermissionGranted) {
+                        if (!isIOS) {
+                            restartRecognition();
+                        }
+                    }
+                };
+            }
+
+            function restartRecognition() {
+                if (recognitionRetryCount >= maxRetries) {
+                    console.warn('Max retries reached, resetting recognition');
+                    createRecognition();
+                    recognitionRetryCount = 0;
+                }
+
+                setTimeout(() => {
+                    if (!isListening && !isSpeaking && !wasInterrupted && micPermissionGranted) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.warn('Failed to restart recognition:', e);
+                            recognitionRetryCount++;
+                            restartRecognition();
+                        }
+                    }
+                }, Math.min(1000 * Math.pow(2, recognitionRetryCount), 5000));
+            }
+
+            createRecognition();
+            
+            // Don't auto-start on mobile - require button press
+            if (!isIOS && !navigator.userAgent.match(/Mobi/)) {
+                checkMicrophonePermission();
+            }
+        }
+
+        // Function to check microphone permission
+        function checkMicrophonePermission() {
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'microphone' })
+                    .then((permissionStatus) => {
+                        if (permissionStatus.state === 'granted') {
+                            micPermissionGranted = true;
+                            try {
+                                recognition.start();
+                            } catch (e) {
+                                console.warn('Error starting recognition:', e);
+                            }
+                        } else if (permissionStatus.state === 'prompt') {
+                            updateStatus('Tap mic to enable voice');
+                        } else {
+                            updateStatus('Microphone access denied');
+                        }
+                    })
+                    .catch((e) => {
+                        console.warn('Error checking microphone permission:', e);
+                        updateStatus('Tap mic to enable voice');
+                    });
+            } else {
+                updateStatus('Tap mic to enable voice');
+            }
+        }
+
+        // Update status indicator
+        function updateStatus(message) {
+            if (message) {
+                statusIndicator.textContent = message;
+                statusIndicator.style.display = 'block';
+            } else {
+                statusIndicator.style.display = 'none';
+            }
+        }
+
+        function toggleMicrophone() {
+            if (isListening) {
+                // If currently listening, stop
+                try {
+                    recognition.stop();
+                    updateStatus('Microphone off');
+                } catch (e) {
+                    console.warn('Error stopping recognition:', e);
+                }
+            } else {
+                // If not listening, start
+                wasInterrupted = false;
+                try {
+                    recognition.start();
+                    micPermissionGranted = true;
+                } catch (e) {
+                    console.warn('Error starting recognition:', e);
+                    updateStatus('Failed to start microphone');
+                }
+            }
+        }
+
+        // Add microphone button event listener
+        micButton.addEventListener('click', toggleMicrophone);
+
+        function activateListening() {
+            isListening = true;
+            wasInterrupted = false;
+            speak('I\'m listening').catch(() => {});
+        }
+
+        function deactivateListening() {
+            isListening = false;
+            if (recognition) {
+                try {
+                    recognition.stop();
+                    micButton.style.backgroundColor = '#3b82f6';
+                    updateStatus('Microphone off');
+                } catch (e) {
+                    console.warn('Error stopping recognition:', e);
+                }
+            }
+        }
+
+        // Speech synthesis
+        async function loadVoices() {
+            try {
+                const voices = await new Promise((resolve) => {
+                    let voices = synth.getVoices();
+                    if (voices.length > 0) {
+                        resolve(voices);
+                    } else {
+                        synth.onvoiceschanged = () => {
+                            voices = synth.getVoices();
+                            resolve(voices);
+                        };
+                    }
+                });
+                const femaleVoice = voices.find(v => 
+                    v.name.includes('Female') || v.name.includes('Woman') || v.name.includes('Samantha')
+                );
+                currentVoice = femaleVoice || voices[0];
+            } catch (e) {
+                console.error('Error loading voices:', e);
+            }
+        }
+
+        function speak(text) {
+            return new Promise((resolve) => {
+                if (synth.speaking) {
+                    synth.cancel();
+                    isSpeaking = false;
+                }
+
+                isSpeaking = true;
+                updateStatus('Speaking...');
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.voice = currentVoice;
+                utterance.rate = 0.8;
+                utterance.pitch = 1.4;
+
+                utterance.onend = () => {
+                    isSpeaking = false;
+                    updateStatus('');
+                    if (!isListening && !wasInterrupted && micPermissionGranted && !isIOS) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.warn('Failed to restart recognition:', e);
+                            setTimeout(() => {
+                                if (!isListening && !isSpeaking && !wasInterrupted && micPermissionGranted) {
+                                    try {
+                                        recognition.start();
+                                    } catch (e) {
+                                        console.warn('Retry failed:', e);
+                                    }
+                                }
+                            }, 1000);
+                        }
+                    }
+                    resolve();
+                };
+
+                utterance.onerror = (event) => {
+                    if (event.error !== 'interrupted') {
+                        console.error('Speech error:', event.error);
+                    }
+                    isSpeaking = false;
+                    updateStatus('');
+                    if (!isListening && !wasInterrupted && micPermissionGranted && !isIOS) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.warn('Failed to restart recognition:', e);
+                            setTimeout(() => {
+                                if (!isListening && !isSpeaking && !wasInterrupted && micPermissionGranted) {
+                                    try {
+                                        recognition.start();
+                                    } catch (e) {
+                                        console.warn('Retry failed:', e);
+                                    }
+                                }
+                            }, 1000);
+                        }
+                    }
+                    resolve();
+                };
+
+                try {
+                    synth.speak(utterance);
+                } catch (e) {
+                    console.error('Error starting speech:', e);
+                    isSpeaking = false;
+                    updateStatus('');
+                    resolve();
+                }
+            });
+        }
+
+        function stopSpeaking() {
+            if (isSpeaking) {
+                synth.cancel();
+                isSpeaking = false;
+                wasInterrupted = true;
+                updateStatus('');
+            }
+        }
+
+        // Camera handling
+        async function startWebcam() {
+            updateStatus('Requesting camera access...');
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: navigator.userAgent.match(/Mobi/) ? 'environment' : 'user'
+                    }
+                };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                webcam.srcObject = stream;
+                updateStatus('');
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+                try {
+                    updateStatus('Trying alternate camera...');
+                    const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    webcam.srcObject = fallbackStream;
+                    updateStatus('');
+                } catch (fallbackError) {
+                    console.error('Error accessing any camera:', fallbackError);
+                    updateStatus('Camera access denied');
+                    speak('Unable to access camera').catch(() => {});
+                }
+            }
+        }
+
+        function captureImage() {
+            if (!webcam.videoWidth) return null;
+            const canvas = document.createElement('canvas');
+            canvas.width = webcam.videoWidth;
+            canvas.height = webcam.videoHeight;
+            canvas.getContext('2d').drawImage(webcam, 0, 0);
+            return canvas.toDataURL('image/jpeg').split(',')[1];
+        }
+
+        cameraButton.addEventListener('click', async () => {
+            cameraOn = !cameraOn;
+            if (cameraOn) {
+                webcamContainer.style.display = 'flex';
+                cameraButton.innerHTML = '<i class="fa-solid fa-video" style="color: #3b82f6;"></i>';
+                await startWebcam();
+                setInterval(() => {
+                    if (cameraOn && webcam.videoWidth > 0) lastCapturedImage = captureImage();
+                }, 500);
+            } else {
+                webcamContainer.style.display = 'none';
+                cameraButton.innerHTML = '<i class="fa-solid fa-video-slash" style="color: #3b82f6;"></i>';
+                lastCapturedImage = null;
+                if (webcam.srcObject) {
+                    webcam.srcObject.getTracks().forEach(track => track.stop());
+                }
+                updateStatus('');
+            }
+        });
+
+        // Chat history management
+        function updateSideChat() {
+            sideChat.innerHTML = '';
+            chatHistory.forEach(message => {
+                const div = document.createElement('div');
+                div.textContent = `${message.role}: ${message.content}`;
+                sideChat.appendChild(div);
+            });
+        }
+
+        chatToggle.addEventListener('click', () => {
+            sideChat.classList.toggle('open');
+        });
+
+        // Process commands
+        async function processCommand(command) {
+            if (!command.trim()) return;
+
+            const lowerCommand = command.toLowerCase();
+            if (lowerCommand.includes('stop listening')) {
+                deactivateListening();
+                chatHistory.push({ role: 'user', content: command });
+                chatHistory.push({ role: 'assistant', content: 'I\'ve stopped listening' });
+                addMessage(command, 'user');
+                addMessage('I\'ve stopped listening', 'assistant');
+                await speak('I\'ve stopped listening').catch(() => {});
+                saveChatHistory();
+                return;
+            }
+
+            chatHistory.push({ role: 'user', content: command });
+            addMessage(command, 'user');
+
+            try {
+                updateStatus('Processing...');
+                let responseText;
+                if (cameraOn && lastCapturedImage) {
+                    const response = await fetch(visionEndpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: `Your name is . Answer the following question based on the image and context: ${command}` },
+                                    { inlineData: { mimeType: 'image/jpeg', data: lastCapturedImage } }
+                                ]
+                            }]
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.candidates) {
+                        throw new Error(`Vision API error: ${response.status}`);
+                    }
+                    responseText = data.candidates[0].content.parts[0].text;
+                } else {
+                    const context = chatHistory.map(c => `User: ${c.content}\n: ${c.response || ''}`).join('\n\n');
+                    const response = await fetch(`${textEndpoint}?key=${API_KEY}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [{ text: context ? `${context}\n\n${command}` : command }]
+                            }]
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.candidates) {
+                        throw new Error(`Text API error: ${response.status}`);
+                    }
+                    responseText = data.candidates[0].content.parts[0].text;
+                }
+
+                chatHistory.push({ role: 'assistant', content: responseText });
+                addMessage(responseText, 'assistant');
+                updateStatus('');
+                await speak(`${responseText}`).catch(() => {});
+                saveChatHistory();
+            } catch (error) {
+                console.error('Error:', error);
+                const errorMessage = 'Sorry, I couldn\'t process that request';
+                chatHistory.push({ role: 'assistant', content: errorMessage });
+                addMessage(errorMessage, 'assistant');
+                updateStatus('Error occurred');
+                await speak(`${errorMessage}`).catch(() => {});
+                saveChatHistory();
+            }
+        }
+
+        function addMessage(text, sender) {
+            updateSideChat();
+            saveChatHistory();
+        }
+
+        // Initialize
+        window.onload = async () => {
+            await loadVoices();
+            initVoiceRecognition();
+            updateStatus('Tap mic to start');
+        };
+    </script>
 </body>
 </html>
